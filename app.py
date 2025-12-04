@@ -48,6 +48,22 @@ def get_vec(text, _model):
         st.warning(f"Could not generate embedding for '{text}'.")
         return None
 
+def get_batch_embeddings(text_list, _model, batch_size=250):
+    """
+    Generates embeddings in batches to reduce API overhead.
+    """
+    embeddings = []
+    for i in range(0, len(text_list), batch_size):
+        batch = text_list[i : i + batch_size]
+        try:
+            batch_results = _model.get_embeddings(batch)
+            for result in batch_results:
+                embeddings.append(result.values)
+        except Exception as e:
+            st.warning(f"Error in batch {i}: {e}")
+            
+    return np.array(embeddings, dtype='float32')
+
 def chunk_text(text):
     """Splits text into a list of lowercase words, removing punctuation."""
     text = text.lower()
@@ -70,14 +86,12 @@ def build_faiss_index(_text_chunks, _model):
     if not _text_chunks or not _model: return None, None
 
     with st.spinner(f"Creating embeddings for {len(_text_chunks)} words..."):
-        word_vecs = [get_vec(word, _model) for word in _text_chunks]
-        valid_vecs = [vec for vec in word_vecs if vec is not None]
+        word_vecs_np = get_batch_embeddings(_text_chunks, _model)
 
-    if not valid_vecs:
+    if word_vecs_np.size == 0:
         st.error("Could not generate any valid embeddings.")
         return None, None
 
-    word_vecs_np = np.array(valid_vecs)
     d = word_vecs_np.shape[1]
     index = faiss.IndexFlatIP(d)
     index.add(word_vecs_np)
@@ -263,4 +277,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
