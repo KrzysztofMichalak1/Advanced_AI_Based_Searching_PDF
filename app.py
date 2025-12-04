@@ -1,4 +1,5 @@
 import streamlit as st
+from st_keyup import st_keyup
 st.set_page_config(layout="wide")
 import vertexai
 from vertexai.language_models import TextEmbeddingModel
@@ -100,13 +101,16 @@ def build_faiss_index(_text_chunks, _model):
 
 def search_faiss(query, index, words, _model, similarity_threshold=0.0):
     """Searches the FAISS index, filters by similarity, removes duplicates, and sorts results."""
+    # Define the structure of the DataFrame to ensure consistency
+    df_cols = ["Word", "Similarity Score", "Rank"]
+
     if not query:
         st.warning("Please enter a search term.")
-        return None
+        return pd.DataFrame(columns=df_cols)
 
     query_vec = get_vec(query, _model)
     if query_vec is None:
-        return None
+        return pd.DataFrame(columns=df_cols)
         
     target_vec = np.array([query_vec])
     
@@ -141,7 +145,7 @@ def search_faiss(query, index, words, _model, similarity_threshold=0.0):
 
     if not unique_filtered_results:
         st.info(f"No results found with a similarity score above {similarity_threshold:.2f}.")
-        return None
+        return pd.DataFrame(columns=df_cols)
         
     # Convert dictionary values to a list for sorting
     final_results = list(unique_filtered_results.values())
@@ -237,43 +241,76 @@ def main():
     if st.session_state.get("faiss_index") is not None:
         st.divider()
         st.header(f"Search in '{st.session_state.file_name}'")
-        
-        search_query = st.text_input("Enter a word to find similar terms in the document:")
-        similarity_threshold = st.slider("Similarity Threshold", min_value=0.0, max_value=1.0, value=0.5, step=0.01)
-        
-        results_df = None # Initialize results_df
 
-        if search_query:
-            with st.spinner("Searching..."):
-                results_df = search_faiss(
-                    search_query, 
-                    st.session_state.faiss_index, 
-                    st.session_state.words, 
-                    model,
-                    similarity_threshold=similarity_threshold
-                )
+        # --- State Initialization ---
+        # Initialize session state variables for robust UI updates
+        if "results_df" not in st.session_state:
+            st.session_state.results_df = pd.DataFrame(columns=["Word", "Similarity Score", "Rank"])
+        if "last_query" not in st.session_state:
+            st.session_state.last_query = ""
+        # Set a default threshold if not present
+        if "last_threshold" not in st.session_state:
+            st.session_state.last_threshold = 0.5
+
+        # --- Widget Definitions ---
+        current_query = st_keyup(
+            "Enter a word to find similar terms in the document:",
+            debounce=300,
+            key="search_query", 
+        )
         
-        # Create two columns for the layout
+        current_threshold = st.slider("Similarity Threshold", min_value=0.0, max_value=1.0, value=st.session_state.last_threshold, step=0.01)
+
+        # --- Instant UI Rendering ---
+        # The UI is drawn immediately using data from the *previous* run
         col1, col2 = st.columns([3, 1])
 
         with col1: # Main content (text display)
-            st.subheader("Highlighted Document Text" if search_query and results_df is not None else "Document Text")
+            query_from_last_run = st.session_state.last_query
+            results_from_last_run = st.session_state.results_df
+            
+            has_results = query_from_last_run and not results_from_last_run.empty
+            st.subheader("Highlighted Document Text" if has_results else "Document Text")
+
             full_text = st.session_state.get("extracted_text", "")
             if full_text:
-                if search_query and results_df is not None:
-                    words_to_highlight = set(results_df['Word'].str.lower())
+                if has_results:
+                    words_to_highlight = set(results_from_last_run['Word'].str.lower())
                     highlighted_content = highlight_text(full_text, words_to_highlight)
                     st.markdown(f'<div style="height: 400px; overflow-y: scroll; border: 1px solid #ccc; padding: 10px; border-radius: 5px;">{highlighted_content}</div>', unsafe_allow_html=True)
                 else:
-                    # Display the full un-highlighted text if no search is active or no results are found
                     st.markdown(f'<div style="height: 400px; overflow-y: scroll; border: 1px solid #ccc; padding: 10px; border-radius: 5px;">{full_text}</div>', unsafe_allow_html=True)
-            # No warning needed here as the initial state (no file) is handled by hiding this whole section
-        
+
         with col2: # Right column for search results
-            if search_query and results_df is not None:
-                st.subheader(f"Similar words for '{search_query}'")
-                df_display = results_df.drop(columns=["Similarity Score"])
-                st.table(df_display)
+            st.subheader("Similar Words")
+            if query_from_last_run:
+                if not results_from_last_run.empty:
+                    df_display = results_from_last_run[["Rank", "Word", "Similarity Score"]]
+                    st.table(df_display)
+                else:
+                    st.info(f"No results for '{query_from_last_run}' found.")
+            else:
+                st.info("Enter a word to start searching.")
+
+        # --- Background Search & Rerun Logic ---
+        # After the UI is drawn, check if the query OR threshold has changed.
+        if (current_query != st.session_state.last_query) or (current_threshold != st.session_state.last_threshold):
+            # Update the state with the new values
+            st.session_state.last_query = current_query
+            st.session_state.last_threshold = current_threshold
+
+            if current_query:
+                st.session_state.results_df = search_faiss(
+                    current_query,
+                    st.session_state.faiss_index,
+                    st.session_state.words,
+                    model,
+                    current_threshold # Pass the current threshold to the search
+                )
+            else:
+                st.session_state.results_df = pd.DataFrame(columns=["Word", "Similarity Score", "Rank"])
+            
+            st.rerun()
 
 if __name__ == "__main__":
     main()
