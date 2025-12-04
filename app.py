@@ -64,24 +64,27 @@ def extract_text_from_pdf(uploaded_file):
         return ""
 
 @st.cache_data(show_spinner=False)
-def build_faiss_index(_text_chunks, _model):
-    """Builds a FAISS index from a list of text chunks."""
-    if not _text_chunks or not _model: return None, None
+def build_faiss_index(_unique_words, _model):
+    """Builds a FAISS index from a list of unique words."""
+    if not _unique_words or not _model: return None, None
 
-    with st.spinner(f"Creating embeddings for {len(_text_chunks)} words..."):
-        word_vecs = [get_vec(word, _model) for word in _text_chunks]
-        valid_vecs = [vec for vec in word_vecs if vec is not None]
-
-    if not valid_vecs:
-        st.error("Could not generate any valid embeddings.")
-        return None, None
+    with st.spinner(f"Creating embeddings for {len(_unique_words)} unique words..."):
+        word_vecs = [get_vec(word, _model) for word in _unique_words]
+        
+        # Filter out words for which embedding failed
+        valid_pairs = [(vec, word) for vec, word in zip(word_vecs, _unique_words) if vec is not None]
+        if not valid_pairs:
+            st.error("Could not generate any valid embeddings.")
+            return None, None
+            
+        valid_vecs, valid_words = zip(*valid_pairs)
 
     word_vecs_np = np.array(valid_vecs)
     d = word_vecs_np.shape[1]
     index = faiss.IndexFlatIP(d)
     index.add(word_vecs_np)
     
-    return index, _text_chunks
+    return index, list(valid_words)
 
 def search_faiss(query, index, words, _model, k=10):
     """Searches the FAISS index for the top k similar words."""
@@ -113,7 +116,7 @@ def main():
     if model is None:
         st.stop()
 
-    st.write("Upload a PDF to create a searchable index of its content.")
+    st.write("Upload a PDF to create a searchable index of its unique words.")
 
     uploaded_file = st.file_uploader("Upload PDF", type=["pdf"])
 
@@ -123,12 +126,16 @@ def main():
             with st.spinner(f"Processing '{uploaded_file.name}'..."):
                 extracted_text = extract_text_from_pdf(uploaded_file)
                 if extracted_text:
-                    words = chunk_text(extracted_text)
-                    faiss_index, indexed_words = build_faiss_index(words, model)
+                    all_words = chunk_text(extracted_text)
+                    unique_words = sorted(list(set(all_words)))
+                    
+                    st.write(f"Found {len(all_words)} total words, with {len(unique_words)} unique words to be indexed.")
+                    
+                    faiss_index, indexed_words = build_faiss_index(unique_words, model)
                     st.session_state.faiss_index = faiss_index
                     st.session_state.words = indexed_words
                     if faiss_index:
-                        st.success(f"Index for '{uploaded_file.name}' created with {faiss_index.ntotal} words.")
+                        st.success(f"Index for '{uploaded_file.name}' created with {faiss_index.ntotal} unique words.")
 
 
     if st.session_state.get("faiss_index") is not None:
