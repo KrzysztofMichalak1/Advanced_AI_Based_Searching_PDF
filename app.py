@@ -105,19 +105,20 @@ def get_batch_embeddings(text_list, batch_size=250, max_workers=5):
             if emb_dim:
                 final_embeddings.append(np.zeros(emb_dim, dtype='float32'))
             
-                return np.array(final_embeddings, dtype='float32')
-    
-    MINIMAL_STOP_WORDS = {
-        "the", "a", "an", "and", "or", "but", "of", "to", "in", "on", "at", "by", "from", "with", "is", "are", "was", "were", "be", "it", "that", "this"
-    }
-    
-    def chunk_text(text):
-        """Splits text into a list of lowercase words, removing punctuation and stop words."""
-        text = text.lower()
-        text = re.sub(r'[^\w\s]', '', text)
-        words = text.split()
-        filtered_words = [w for w in words if w not in MINIMAL_STOP_WORDS]
-        return filtered_words
+    return np.array(final_embeddings, dtype='float32')
+
+MINIMAL_STOP_WORDS = {
+    "the", "a", "an", "and", "or", "but", "of", "to", "in", "on", "at", "by", "from", "with", "is", "are", "was", "were", "be", "it", "that", "this"
+}
+
+def chunk_text(text):
+    """Splits text into a list of lowercase words, removing punctuation and stop words."""
+    text = text.lower()
+    text = re.sub(r'[^\w\s]', '', text)
+    words = text.split()
+    filtered_words = [w for w in words if w not in MINIMAL_STOP_WORDS]
+    return filtered_words
+
 def extract_text_from_pdf(uploaded_file):
     """Extracts text from an uploaded PDF file stream."""
     try:
