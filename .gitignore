@@ -52,3 +52,4 @@ env/
 .pytest_cache/
 .vscode/
 .history/
+gcp_key.json
