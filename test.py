@@ -12,13 +12,13 @@ PROJECT_ID = "advanced-searching-pdf"
 LOCATION = "us-central1"
 
 vertexai.init(project=PROJECT_ID, location=LOCATION)
-model = TextEmbeddingModel.from_pretrained("text-embedding-004")
+model = TextEmbeddingModel.from_pretrained("text-embedding-005")
 
 def get_vec(text):
     embedding = model.get_embeddings([text])[0].values
     return np.array(embedding, dtype='float32') 
 
-target_word = "mom"
+target_word = 'idiot'
 
 def chunk_text(text):
     """
@@ -51,11 +51,11 @@ def extract_text_from_pdf(pdf_path):
 
 pdf_file = "Story.pdf"
 extracted_content = extract_text_from_pdf(pdf_file)
-print("--- Extracted Text ---")
-print(extracted_content)
+# print("--- Extracted Text ---")
+# print(extracted_content)
 
 text_chunks = chunk_text(extracted_content)
-words = text_chunks
+words = sorted(list(set(text_chunks)))
 
 
 print(f"Tworzenie embeddingów dla {len(words)} słów...")
