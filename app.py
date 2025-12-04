@@ -10,6 +10,8 @@ import fitz  # PyMuPDF
 import re
 import io
 import pandas as pd
+from tqdm import tqdm
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # --- Vertex AI and Model Initialization ---
 
@@ -49,28 +51,73 @@ def get_vec(text, _model):
         st.warning(f"Could not generate embedding for '{text}'.")
         return None
 
-def get_batch_embeddings(text_list, _model, batch_size=250):
+def get_batch_embeddings(text_list, batch_size=250, max_workers=5):
     """
-    Generates embeddings in batches to reduce API overhead.
+    Generates embeddings in batches concurrently to reduce API overhead.
     """
-    embeddings = []
-    for i in range(0, len(text_list), batch_size):
-        batch = text_list[i : i + batch_size]
+    embeddings = [None] * len(text_list)
+    
+    def process_batch(texts, start_index):
         try:
-            batch_results = _model.get_embeddings(batch)
-            for result in batch_results:
-                embeddings.append(result.values)
+            # Note: This inner function uses the 'model' from the parent scope
+            batch_embs = model.get_embeddings(texts)
+            return start_index, [emb.values for emb in batch_embs]
         except Exception as e:
-            st.warning(f"Error in batch {i}: {e}")
+            st.warning(f"Error in batch starting at {start_index}: {e}")
+            return start_index, None
+
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = {
+            executor.submit(process_batch, text_list[i:i + batch_size], i)
+            for i in range(0, len(text_list), batch_size)
+        }
+
+        # The tqdm progress bar will appear in the console where Streamlit is running
+        for future in tqdm(as_completed(futures), total=len(futures), desc="Generating Embeddings"):
+            start_index, embs = future.result()
+            if embs:
+                for i, emb in enumerate(embs):
+                    embeddings[start_index + i] = emb
+    
+    # Find embedding dimension from the first successful result
+    emb_dim = None
+    for emb in embeddings:
+        if emb is not None:
+            emb_dim = len(emb)
+            break
+    
+    # If all batches failed, try to get the dimension as a fallback
+    if emb_dim is None and len(text_list) > 0:
+        st.warning("All embedding batches failed. Attempting to probe for embedding dimension.")
+        try:
+            # Probe to get embedding dimension
+            emb_dim = len(model.get_embeddings(['probe'])[0].values)
+        except Exception as e:
+            st.error(f"Could not determine embedding dimension: {e}")
+            return np.array([], dtype='float32')
+
+    # Fill failed embeddings with zero vectors
+    final_embeddings = []
+    for emb in embeddings:
+        if emb is not None:
+            final_embeddings.append(emb)
+        else:
+            if emb_dim:
+                final_embeddings.append(np.zeros(emb_dim, dtype='float32'))
             
-    return np.array(embeddings, dtype='float32')
-
-def chunk_text(text):
-    """Splits text into a list of lowercase words, removing punctuation."""
-    text = text.lower()
-    text = re.sub(r'[^\w\s]', '', text)
-    return text.split()
-
+                return np.array(final_embeddings, dtype='float32')
+    
+    MINIMAL_STOP_WORDS = {
+        "the", "a", "an", "and", "or", "but", "of", "to", "in", "on", "at", "by", "from", "with", "is", "are", "was", "were", "be", "it", "that", "this"
+    }
+    
+    def chunk_text(text):
+        """Splits text into a list of lowercase words, removing punctuation and stop words."""
+        text = text.lower()
+        text = re.sub(r'[^\w\s]', '', text)
+        words = text.split()
+        filtered_words = [w for w in words if w not in MINIMAL_STOP_WORDS]
+        return filtered_words
 def extract_text_from_pdf(uploaded_file):
     """Extracts text from an uploaded PDF file stream."""
     try:
@@ -86,8 +133,10 @@ def build_faiss_index(_text_chunks, _model):
     """Builds a FAISS index from a list of text chunks."""
     if not _text_chunks or not _model: return None, None
 
-    with st.spinner(f"Creating embeddings for {len(_text_chunks)} words..."):
-        word_vecs_np = get_batch_embeddings(_text_chunks, _model)
+    # The spinner text will be active while the console shows the tqdm progress bar
+    with st.spinner(f"Creating embeddings for {len(_text_chunks)} words (see console for progress)..."):
+        # The new function uses the global 'model', so we don't pass it here
+        word_vecs_np = get_batch_embeddings(_text_chunks)
 
     if word_vecs_np.size == 0:
         st.error("Could not generate any valid embeddings.")
