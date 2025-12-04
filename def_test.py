@@ -1,5 +1,6 @@
 import vertexai
 from vertexai.language_models import TextEmbeddingModel
+from vertexai.generative_models import GenerativeModel
 import numpy as np
 import os
 import faiss 
@@ -38,14 +39,19 @@ def get_batch_embeddings(text_list, batch_size=250):
             
     return np.array(embeddings, dtype='float32')
 
-target_word = 'einstein'
+target_word = 'tank'
+
+MINIMAL_STOP_WORDS = {
+    "the", "a", "an", "and", "or", "but", "of", "to", "in", "on", "at", "by", "from", "with", "is", "are", "was", "were", "be", "it", "that", "this"
+}
 
 def chunk_text(text):
     text = text.lower()
     text = re.sub(r'[^\w\s]', '', text)
     words = text.split()
-    return words
-
+    filtered_words = [w for w in words if w not in MINIMAL_STOP_WORDS]
+    return filtered_words
+    
 def extract_text_from_pdf(pdf_path):
     text = ""
     try:
@@ -65,6 +71,7 @@ text_chunks = chunk_text(extracted_content)
 # Remove duplicates
 words = sorted(list(set(text_chunks)))
 
+
 # --- Optimization 2: Filter short words (Optional but recommended) ---
 # Filter out words shorter than 3 chars to save time/cost
 
@@ -80,13 +87,24 @@ if words:
 
     print(f"Index contains {index.ntotal} vectors.")
 
-    # Get target vector (Single call is fine here)
-    target_vec = np.array([model.get_embeddings([target_word])[0].values], dtype='float32')
+    # Get definition of target word and embed it
+    generation_model = GenerativeModel("gemini-2.5-flash")
+
+    prompt = f"Write two short, descriptive sentences about '{target_word}', including its key attributes and associations."
+    try:
+        response = generation_model.generate_content(prompt)
+        definition = response.text.strip()
+        print(f"Generated text for '{target_word}': {definition}")
+    except Exception as e:
+        print(f"Could not get definition for '{target_word}': {e}")
+        definition = target_word # Fallback to just the word
+
+    target_vec = np.array([model.get_embeddings([definition])[0].values], dtype='float32')
 
     k = 10
     distances, indices = index.search(target_vec, k)
 
-    print(f"\nClosest words to '{target_word}':")
+    print(f"\nClosest words to the generated text for '{target_word}':")
 
     for i in range(k):
         found_id = indices[0][i]     
